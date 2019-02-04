@@ -5,42 +5,134 @@ Description: >
 
   Sample SAM Template for sam-spa
 
-    Sample SAM Template for sam-app
-    
-# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
 Globals:
-    Function:
-        Timeout: 3
+  Function:
+    Timeout: 3
 
+# TODO: enable Content-Encoding (awslabs/serverless-application-model#786).
 
 Resources:
+  S3ReadRole: 
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service:
+                - 'apigateway.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
 
-    HelloWorldFunction:
-        Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
-        Properties:
-            CodeUri: hello-world/
-            Handler: app.lambdaHandler
-            Runtime: nodejs8.10
-            Environment: # More info about Env Vars: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#environment-object
-                Variables:
-                    PARAM1: VALUE
-            Events:
-                HelloWorld:
-                    Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
-                    Properties:
-                        Path: /hello
-                        Method: get
+  ProxyResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt ServerlessRestApi.RootResourceId
+      RestApiId: !Ref ServerlessRestApi
+      PathPart: '{proxy+}'
 
-Outputs:
+  RootMethod:
+    Type: 'AWS::ApiGateway::Method'
+    Properties:
+      RestApiId: !Ref ServerlessRestApi
+      ResourceId: !GetAtt ServerlessRestApi.RootResourceId
+      HttpMethod: GET
+      AuthorizationType: NONE
+      RequestParameters:
+        method.request.header.If-None-Match: false
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: GET
+        Credentials: !GetAtt S3ReadRole.Arn
+        Uri: arn:aws:apigateway:eu-west-1:s3:path/BUCKET_NAME/index.html
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestParameters:
+          integration.request.header.If-None-Match: method.request.header.If-None-Match
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Content-Type: integration.response.header.Content-Type
+              method.response.header.Content-Length: integration.response.header.Content-Length
+              method.response.header.Cache-Control: "'public, max-age=0, must-revalidate'"
+              method.response.header.ETag: integration.response.header.ETag
+          - StatusCode: 304
+            SelectionPattern: '304'
+            ResponseParameters:
+              method.response.header.Cache-Control: "'public, max-age=0, must-revalidate'"
+              method.response.header.ETag: integration.response.header.ETag
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Content-Type: true
+            method.response.header.Content-Length: true
+            method.response.header.Cache-Control: true
+            method.response.header.ETag: true
+        - StatusCode: 304
+          ResponseParameters:
+            method.response.header.Cache-Control: true
+            method.response.header.ETag: true
 
-    HelloWorldApi:
-      Description: "API Gateway endpoint URL for Prod stage for Hello World function"
-      Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/hello/"
+  ProxyMethod:
+    Type: 'AWS::ApiGateway::Method'
+    Properties:
+      RestApiId: !Ref ServerlessRestApi
+      ResourceId: !Ref ProxyResource
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      RequestParameters:
+        method.request.header.If-None-Match: false
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: GET
+        Credentials: !GetAtt S3ReadRole.Arn
+        Uri: arn:aws:apigateway:eu-west-1:s3:path/BUCKET_NAME/index.html
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestParameters:
+          integration.request.header.If-None-Match: method.request.header.If-None-Match
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Content-Type: integration.response.header.Content-Type
+              method.response.header.Content-Length: integration.response.header.Content-Length
+              method.response.header.Cache-Control: "'public, max-age=0, must-revalidate'"
+              method.response.header.ETag: integration.response.header.ETag
+          - StatusCode: 304
+            SelectionPattern: '304'
+            ResponseParameters:
+              method.response.header.Cache-Control: "'public, max-age=0, must-revalidate'"
+              method.response.header.ETag: integration.response.header.ETag
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Content-Type: true
+            method.response.header.Content-Length: true
+            method.response.header.Cache-Control: true
+            method.response.header.ETag: true
+        - StatusCode: 304
+          ResponseParameters:
+            method.response.header.Cache-Control: true
+            method.response.header.ETag: true
 
-    HelloWorldFunction:
-      Description: "Hello World Lambda Function ARN"
-      Value: !GetAtt HelloWorldFunction.Arn
+  HelloWorldFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: hello-world/
+      Handler: app.lambdaHandler
+      Runtime: nodejs8.10
+      Events:
+        HelloWorld:
+          Type: Api
+          Properties:
+            Path: /hello
+            Method: get
 
-    HelloWorldFunctionIamRole:
-      Description: "Implicit IAM Role created for Hello World function"
-      Value: !GetAtt HelloWorldFunctionRole.Arn
+  Deployment:
+    DependsOn:
+      - RootMethod
+      - ProxyMethod
+    Type: 'AWS::ApiGateway::Deployment'
+    Properties:
+      RestApiId: !Ref ServerlessRestApi
+      StageName: Prod
