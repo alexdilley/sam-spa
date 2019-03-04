@@ -5,134 +5,249 @@ Description: >
 
   Sample SAM Template for sam-spa
 
+Parameters:
+  Region:
+    Type: String
+    Default: eu-west-1
+  StageName:
+    Type: String
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+
+Mappings:
+  Feature:
+    dev:
+      Variable: value
+
 Globals:
   Function:
+    Runtime: nodejs8.10
+    MemorySize: 1024
     Timeout: 3
-
-# TODO: enable Content-Encoding (awslabs/serverless-application-model#786).
+    Layers:
+      - !Ref SharedLayer
+    Environment:
+      Variables:
+        STAGE: !Ref StageName
+        TABLE_NAME: !Ref DataTable
 
 Resources:
-  S3ReadRole: 
-    Type: 'AWS::IAM::Role'
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: 'Allow'
-            Principal:
-              Service:
-                - 'apigateway.amazonaws.com'
-            Action: 'sts:AssumeRole'
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+  # LambdaExecutionRole:
+  #   Type: AWS::IAM::Role
+  #   Properties:
+  #     AssumeRolePolicyDocument:
+  #       Version: 2012-10-17
+  #       Statement:
+  #         -
+  #           Effect: Allow
+  #           Principal:
+  #             Service:
+  #               - lambda.amazonaws.com
+  #           Action:
+  #             - sts:AssumeRole
+  #     ManagedPolicyArns:
+  #       - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 
-  ProxyResource:
-    Type: AWS::ApiGateway::Resource
+  FrontEndBucket:
+    Type: AWS::S3::Bucket
     Properties:
-      ParentId: !GetAtt ServerlessRestApi.RootResourceId
-      RestApiId: !Ref ServerlessRestApi
-      PathPart: '{proxy+}'
+      BucketName: !Sub '${AWS::StackName}-frontend'
+      PublicAccessBlockConfiguration:
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
 
-  RootMethod:
-    Type: 'AWS::ApiGateway::Method'
+  SharedLayer:
+    Type: AWS::Serverless::LayerVersion
     Properties:
-      RestApiId: !Ref ServerlessRestApi
-      ResourceId: !GetAtt ServerlessRestApi.RootResourceId
-      HttpMethod: GET
-      AuthorizationType: NONE
-      RequestParameters:
-        method.request.header.If-None-Match: false
-      Integration:
-        Type: AWS
-        IntegrationHttpMethod: GET
-        Credentials: !GetAtt S3ReadRole.Arn
-        Uri: arn:aws:apigateway:eu-west-1:s3:path/BUCKET_NAME/index.html
-        PassthroughBehavior: WHEN_NO_MATCH
-        RequestParameters:
-          integration.request.header.If-None-Match: method.request.header.If-None-Match
-        IntegrationResponses:
-          - StatusCode: 200
-            ResponseParameters:
-              method.response.header.Content-Type: integration.response.header.Content-Type
-              method.response.header.Content-Length: integration.response.header.Content-Length
-              method.response.header.Cache-Control: "'public, max-age=0, must-revalidate'"
-              method.response.header.ETag: integration.response.header.ETag
-          - StatusCode: 304
-            SelectionPattern: '304'
-            ResponseParameters:
-              method.response.header.Cache-Control: "'public, max-age=0, must-revalidate'"
-              method.response.header.ETag: integration.response.header.ETag
-      MethodResponses:
-        - StatusCode: 200
-          ResponseParameters:
-            method.response.header.Content-Type: true
-            method.response.header.Content-Length: true
-            method.response.header.Cache-Control: true
-            method.response.header.ETag: true
-        - StatusCode: 304
-          ResponseParameters:
-            method.response.header.Cache-Control: true
-            method.response.header.ETag: true
+      ContentUri: src/shared
 
-  ProxyMethod:
-    Type: 'AWS::ApiGateway::Method'
+  Fn::Transform:
+    Name: AWS::Include
+    Parameters:
+      # TODO: package includes (awslabs/aws-sam-cli#654).
+      Location: !Sub 's3://${AWS::StackName}/proxies.yml'
+
+  # TODO: enable Content-Encoding (awslabs/serverless-application-model#786).
+  RestApi:
+    Type: AWS::Serverless::Api
     Properties:
-      RestApiId: !Ref ServerlessRestApi
-      ResourceId: !Ref ProxyResource
-      HttpMethod: ANY
-      AuthorizationType: NONE
-      RequestParameters:
-        method.request.header.If-None-Match: false
-      Integration:
-        Type: AWS
-        IntegrationHttpMethod: GET
-        Credentials: !GetAtt S3ReadRole.Arn
-        Uri: arn:aws:apigateway:eu-west-1:s3:path/BUCKET_NAME/index.html
-        PassthroughBehavior: WHEN_NO_MATCH
-        RequestParameters:
-          integration.request.header.If-None-Match: method.request.header.If-None-Match
-        IntegrationResponses:
-          - StatusCode: 200
-            ResponseParameters:
-              method.response.header.Content-Type: integration.response.header.Content-Type
-              method.response.header.Content-Length: integration.response.header.Content-Length
-              method.response.header.Cache-Control: "'public, max-age=0, must-revalidate'"
-              method.response.header.ETag: integration.response.header.ETag
-          - StatusCode: 304
-            SelectionPattern: '304'
-            ResponseParameters:
-              method.response.header.Cache-Control: "'public, max-age=0, must-revalidate'"
-              method.response.header.ETag: integration.response.header.ETag
-      MethodResponses:
-        - StatusCode: 200
-          ResponseParameters:
-            method.response.header.Content-Type: true
-            method.response.header.Content-Length: true
-            method.response.header.Cache-Control: true
-            method.response.header.ETag: true
-        - StatusCode: 304
-          ResponseParameters:
-            method.response.header.Cache-Control: true
-            method.response.header.ETag: true
+      Name: !Ref AWS::StackName
+      StageName: !Ref StageName
 
   HelloWorldFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: hello-world/
+      FunctionName: !Sub '${AWS::StackName}-hello-world'
+      CodeUri: src/http/hello-world
       Handler: app.lambdaHandler
-      Runtime: nodejs8.10
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref DataTable
+        # TODO: use policy template (awslabs/serverless-application-model#625):
+        # - SSMParameterReadPolicy:
+        #     ParameterName: ${AppName}/${StageName}/sessionSecret
+        - Statement:
+          -
+            Effect: Allow
+            Action:
+              - ssm:GetParameter
+            Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AWS::StackName}/sessionSecret'
+      Environment:
+        Variables:
+          VAR: !FindInMap [Feature, !Ref StageName, Variable]
       Events:
-        HelloWorld:
+        HttpGet:
           Type: Api
           Properties:
+            RestApiId: !Ref RestApi
             Path: /hello
             Method: get
 
-  Deployment:
-    DependsOn:
-      - RootMethod
-      - ProxyMethod
-    Type: 'AWS::ApiGateway::Deployment'
+  # TODO: use AWS::Serverless::SimpleTable with PAY_PER_REQUEST (awslabs/serverless-application-model/#705).
+  DataTable:
+    Type: AWS::DynamoDB::Table
     Properties:
-      RestApiId: !Ref ServerlessRestApi
-      StageName: Prod
+      TableName: !Sub '${AWS::StackName}-data'
+      AttributeDefinitions:
+        -
+          AttributeName: PK
+          AttributeType: S
+        -
+          AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        -
+          AttributeName: PK
+          KeyType: HASH
+        -
+          AttributeName: SK
+          KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+
+# Resources:
+#   S3ReadRole: 
+#     Type: "AWS::IAM::Role"
+#     Properties:
+#       AssumeRolePolicyDocument:
+#         Version: '2012-10-17'
+#         Statement:
+#           - Effect: 'Allow'
+#             Principal:
+#               Service:
+#                 - 'apigateway.amazonaws.com'
+#             Action: 'sts:AssumeRole'
+#       ManagedPolicyArns:
+#         - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+#
+#   ProxyResource:
+#     Type: AWS::ApiGateway::Resource
+#     Properties:
+#       ParentId: !GetAtt ServerlessRestApi.RootResourceId
+#       RestApiId: !Ref ServerlessRestApi
+#       PathPart: '{proxy+}'
+#
+#   RootMethod:
+#     Type: 'AWS::ApiGateway::Method'
+#     Properties:
+#       RestApiId: !Ref ServerlessRestApi
+#       ResourceId: !GetAtt ServerlessRestApi.RootResourceId
+#       HttpMethod: GET
+#       AuthorizationType: NONE
+#       RequestParameters:
+#         method.request.header.If-None-Match: false
+#       Integration:
+#         Type: AWS
+#         IntegrationHttpMethod: GET
+#         Credentials: !GetAtt S3ReadRole.Arn
+#         Uri: arn:aws:apigateway:eu-west-1:s3:path/BUCKET_NAME/index.html
+#         PassthroughBehavior: WHEN_NO_MATCH
+#         RequestParameters:
+#           integration.request.header.If-None-Match: method.request.header.If-None-Match
+#         IntegrationResponses:
+#           - StatusCode: 200
+#             ResponseParameters:
+#               method.response.header.Content-Type: integration.response.header.Content-Type
+#               method.response.header.Content-Length: integration.response.header.Content-Length
+#               method.response.header.Cache-Control: "'public, max-age=0, must-revalidate'"
+#               method.response.header.ETag: integration.response.header.ETag
+#           - StatusCode: 304
+#             SelectionPattern: '304'
+#             ResponseParameters:
+#               method.response.header.Cache-Control: "'public, max-age=0, must-revalidate'"
+#               method.response.header.ETag: integration.response.header.ETag
+#       MethodResponses:
+#         - StatusCode: 200
+#           ResponseParameters:
+#             method.response.header.Content-Type: true
+#             method.response.header.Content-Length: true
+#             method.response.header.Cache-Control: true
+#             method.response.header.ETag: true
+#         - StatusCode: 304
+#           ResponseParameters:
+#             method.response.header.Cache-Control: true
+#             method.response.header.ETag: true
+#
+#   ProxyMethod:
+#     Type: 'AWS::ApiGateway::Method'
+#     Properties:
+#       RestApiId: !Ref ServerlessRestApi
+#       ResourceId: !Ref ProxyResource
+#       HttpMethod: ANY
+#       AuthorizationType: NONE
+#       RequestParameters:
+#         method.request.header.If-None-Match: false
+#       Integration:
+#         Type: AWS
+#         IntegrationHttpMethod: GET
+#         Credentials: !GetAtt S3ReadRole.Arn
+#         Uri: arn:aws:apigateway:eu-west-1:s3:path/BUCKET_NAME/index.html
+#         PassthroughBehavior: WHEN_NO_MATCH
+#         RequestParameters:
+#           integration.request.header.If-None-Match: method.request.header.If-None-Match
+#         IntegrationResponses:
+#           - StatusCode: 200
+#             ResponseParameters:
+#               method.response.header.Content-Type: integration.response.header.Content-Type
+#               method.response.header.Content-Length: integration.response.header.Content-Length
+#               method.response.header.Cache-Control: "'public, max-age=0, must-revalidate'"
+#               method.response.header.ETag: integration.response.header.ETag
+#           - StatusCode: 304
+#             SelectionPattern: '304'
+#             ResponseParameters:
+#               method.response.header.Cache-Control: "'public, max-age=0, must-revalidate'"
+#               method.response.header.ETag: integration.response.header.ETag
+#       MethodResponses:
+#         - StatusCode: 200
+#           ResponseParameters:
+#             method.response.header.Content-Type: true
+#             method.response.header.Content-Length: true
+#             method.response.header.Cache-Control: true
+#             method.response.header.ETag: true
+#         - StatusCode: 304
+#           ResponseParameters:
+#             method.response.header.Cache-Control: true
+#             method.response.header.ETag: true
+#
+#   HelloWorldFunction:
+#     Type: AWS::Serverless::Function
+#     Properties:
+#       CodeUri: hello-world/
+#       Handler: app.lambdaHandler
+#       Runtime: nodejs8.10
+#       Events:
+#         HelloWorld:
+#           Type: Api
+#           Properties:
+#             Path: /hello
+#             Method: get
+#
+#   Deployment:
+#     DependsOn:
+#       - RootMethod
+#       - ProxyMethod
+#     Type: 'AWS::ApiGateway::Deployment'
+#     Properties:
+#       RestApiId: !Ref ServerlessRestApi
+#       StageName: Prod

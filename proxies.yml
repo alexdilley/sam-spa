@@ -1,0 +1,99 @@
+RootMethod:
+  Type: AWS::ApiGateway::Method
+  Properties:
+    RestApiId:
+      Ref: RestApi
+    ResourceId:
+      Fn::GetAtt:
+        - RestApi
+        - RootResourceId
+    HttpMethod: GET
+    AuthorizationType: NONE
+    Integration:
+      Type: HTTP_PROXY
+      IntegrationHttpMethod: GET
+      Uri:
+        Fn::Join:
+          - ''
+          - - 'https://'
+            - Fn::GetAtt:
+              - FrontEndBucket
+              - DomainName
+            - '/index.html'
+
+ProxyResource:
+  Type: AWS::ApiGateway::Resource
+  Properties:
+    RestApiId:
+      Ref: RestApi
+    ParentId:
+      Fn::GetAtt:
+        - RestApi
+        - RootResourceId
+    PathPart: '{proxy+}'
+
+ProxyMethod:
+  Type: AWS::ApiGateway::Method
+  Properties:
+    RestApiId:
+      Ref: RestApi
+    ResourceId:
+      Ref: ProxyResource
+    HttpMethod: GET
+    AuthorizationType: NONE
+    Integration:
+      Type: HTTP_PROXY
+      IntegrationHttpMethod: GET
+      Uri:
+        Fn::Join:
+          - ''
+          - - 'https://'
+            - Fn::GetAtt:
+              - FrontEndBucket
+              - DomainName
+            - '/index.html'
+
+StaticResource:
+  Type: AWS::ApiGateway::Resource
+  Properties:
+    RestApiId:
+      Ref: RestApi
+    ParentId:
+      Fn::GetAtt:
+        - RestApi
+        - RootResourceId
+    PathPart: static
+
+StaticProxyResource:
+  Type: AWS::ApiGateway::Resource
+  Properties:
+    RestApiId:
+      Ref: RestApi
+    ParentId:
+      Ref: StaticResource
+    PathPart: '{proxy+}'
+
+StaticProxyMethod:
+  Type: AWS::ApiGateway::Method
+  Properties:
+    RestApiId:
+      Ref: RestApi
+    ResourceId:
+      Ref: StaticProxyResource
+    HttpMethod: GET
+    AuthorizationType: NONE
+    RequestParameters:
+      method.request.path.proxy: false
+    Integration:
+      Type: HTTP_PROXY
+      IntegrationHttpMethod: GET
+      Uri:
+        Fn::Join:
+          - ''
+          - - 'https://'
+            - Fn::GetAtt:
+              - FrontEndBucket
+              - DomainName
+            - '/static/{proxy}'
+      RequestParameters:
+        integration.request.path.proxy: method.request.path.proxy
